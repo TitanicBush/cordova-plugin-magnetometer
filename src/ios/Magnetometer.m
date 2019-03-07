@@ -12,106 +12,105 @@
 
 
 @interface Magnetometer ()
-
-    @property (nonatomic, retain) CLLocationManager *locationManager;
-
+    @property (readwrite, assign) BOOL isRunning;
+    @property (readwrite, assign) BOOL haveReturnedResult;
+    @property (readwrite, strong) CMMotionManager* motionManager;
+    @property (readwrite, assign) double x;
+    @property (readwrite, assign) double y;
+    @property (readwrite, assign) double z;
+    @property (readwrite, assign) NSTimeInterval timestamp;
 @end
 
 @implementation Magnetometer
 
+@synthesize callbackId, isRunning, x, y, z, timestamp;
 
-+ (void)initialize
+// Default to a 10 ms interval
+#define DEFAULT_INTERVAL_MS 10
+
+- (Magnetometer*)init
 {
-    NSLog(@"Magnetometer initialize");
+    self = [super init];
+    if (self) {
+        self.x = 0;
+        self.y = 0;
+        self.z = 0;
+        self.timestamp = 0;
+        self.callbackId = nil;
+        self.isRunning = NO;
+        self.haveReturnedResult = YES;
+        self.motionManager = nil;
+    } else {
+        NSLog(@"Magnetometer initialize");
+    }
+    return self;
 }
 
-- (void)getReading:(CDVInvokedUrlCommand*)command
+- (void)dealloc
 {
-    NSLog(@"getReading");
-    [self startMagnetometer];
+    [self stop:nil];
+}
+
+- (void)start:(CDVInvokedUrlCommand*)command
+{
+    self.haveReturnedResult = NO;
     self.callbackId = command.callbackId;
-}
+    
+    if (!self.motionManager) {
+        self.motionManager = [[CMMotionManager alloc] init];
+    }
 
-- (void)watchReadings:(CDVInvokedUrlCommand*)command
-{
-    NSLog(@"watchReadings");
-    [self startMagnetometer];
-    self.callbackId = command.callbackId;
-}
-
-- (void)stop:(CDVInvokedUrlCommand *)command
-{
-    NSLog(@"stop");
-    [self.locationManager stopUpdatingHeading];
-    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-    [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-}
-
-- (void)startMagnetometer {
-    NSLog(@"startMagnetometer");
-	// setup the location manager
-	_locationManager = [[CLLocationManager alloc] init];
-
-	// check if the hardware has a compass
-	if ([CLLocationManager headingAvailable] == NO) {
-		// No compass is available. This application cannot function without a compass,
-        // so a dialog will be displayed and no magnetic data will be measured.
-        self.locationManager = nil;
-        UIAlertView *noCompassAlert = [[UIAlertView alloc] initWithTitle:@"No Compass!"
-                                                                 message:@"This device does not have the ability to measure magnetic fields."
-                                                                delegate:nil
-                                                       cancelButtonTitle:@"OK"
-                                                       otherButtonTitles:nil];
-        [noCompassAlert show];
-	} else {
-        // heading service configuration
-        self.locationManager.headingFilter = kCLHeadingFilterNone;
-
-        // setup delegate callbacks
-        self.locationManager.delegate = self;
-
-        // start the compass
-        [self.locationManager startUpdatingHeading];
+    if ([self.motionManager isMagnetometerAvailable] == YES) {
+        [self.motionManager setMagnetometerUpdateInterval: (DEFAULT_INTERVAL_MS / 1000)];
+        __weak Magnetometer* weakSelf = self;
+        [self.motionManager startMagnetometerUpdatesToQueue:[NSOperationQueue mainQueue] withHandler: ^(CMMagnetometerData *magnetometerData, NSError *error) {
+            weakSelf.x         = magnetometerData.magneticField.x;
+            weakSelf.y         = magnetometerData.magneticField.y;
+            weakSelf.z         = magnetometerData.magneticField.z;
+            weakSelf.timestamp = ([[NSDate date] timeIntervalSince1970] * 1000);
+            [weakSelf returnMagnetInfo];
+        }];
+        
+        if (!self.isRunning) {
+            self.isRunning = YES;
+        }
+    }
+    else {
+        NSLog(@"Can't get magnetometer data!");
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_INVALID_ACTION messageAsString:@"Error. Magnetometer not available."];
+        
+        [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
     }
 }
 
-- (void)dealloc {
-	// Stop the compass
-	[self.locationManager stopUpdatingHeading];
+- (void)onReset
+{
+    [self stop:nil];
 }
 
-- (UIStatusBarStyle)preferredStatusBarStyle {
-    // Status bar text should be white.
-    return UIStatusBarStyleLightContent;
+- (void)stop:(CDVInvokedUrlCommand*)command
+{
+    if ([self.motionManager isMagnetometerAvailable] == YES) {
+        if (self.haveReturnedResult == NO) {
+            [self returnMagnetInfo];
+        }
+        [self.motionManager stopMagnetometerUpdates];
+    }
+    self.isRunning = NO;
 }
 
-// This delegate method is invoked when the location manager has heading data.
-- (void)locationManager:(CLLocationManager *)manager didUpdateHeading:(CLHeading *)heading {
+- (void)returnMagnetInfo
+{
+    NSMutableDictionary* magnetProps = [NSMutableDictionary dictionaryWithCapacity:4];
 
-    // Compute and display the magnitude (size or strength) of the vector.
-	//      magnitude = sqrt(x^2 + y^2 + z^2)
-	CGFloat magnitude = sqrt(heading.x*heading.x + heading.y*heading.y + heading.z*heading.z);
-    //NSLog(@"magnitude: %f", magnitude);
-    NSMutableDictionary *jsonObj = [[NSMutableDictionary alloc] init];
-    [jsonObj setValue: [NSString stringWithFormat:@"%.1f", heading.x] forKey:@"x"];
-    [jsonObj setValue: [NSString stringWithFormat:@"%.1f", heading.y] forKey:@"y"];
-    [jsonObj setValue: [NSString stringWithFormat:@"%.1f", heading.z] forKey:@"z"];
-    [jsonObj setValue: [NSString stringWithFormat:@"%.1f", magnitude] forKey:@"magnitude"];
+    [magnetProps setValue: [NSNumber numberWithDouble: self.x]         forKey:@"x"];
+    [magnetProps setValue: [NSNumber numberWithDouble: self.y]         forKey:@"y"];
+    [magnetProps setValue: [NSNumber numberWithDouble: self.z]         forKey:@"z"];
+    [magnetProps setValue: [NSNumber numberWithDouble: self.timestamp] forKey:@"timestamp"];
 
-    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:jsonObj];
-    [result setKeepCallbackAsBool:1];
+    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:magnetProps];
+    [result setKeepCallback:[NSNumber numberWithBool:YES]];
     [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+    self.haveReturnedResult = YES;
 }
-
-// This delegate method is invoked when the location managed encounters an error condition.
-- (void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error {
-    if ([error code] == kCLErrorDenied) {
-        // This error indicates that the user has denied the application's request to use location services.
-        [manager stopUpdatingHeading];
-    } else if ([error code] == kCLErrorHeadingFailure) {
-        // This error indicates that the heading could not be determined, most likely because of strong magnetic interference.
-    }
-}
-
-
 @end

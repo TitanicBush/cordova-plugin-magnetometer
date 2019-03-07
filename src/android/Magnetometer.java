@@ -38,88 +38,74 @@ import android.os.Looper;
 
 
 public class Magnetometer extends CordovaPlugin implements SensorEventListener  {
+    // Define the sensor of interest
+    public static final int ANDROID_MAGNETIC_SENSOR_TYPE = Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED;
+    public static final int ANDROID_ACTIVE_SENSOR_ACCURACY = SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM;
 
-    public static int STOPPED = 0;
-    public static int STARTING = 1;
-    public static int RUNNING = 2;
-    public static int ERROR_FAILED_TO_START = 3;
+    public static final int STOPPED = 0;
+    public static final int STARTING = 1;
+    public static final int RUNNING = 2;
+    public static final int ERROR_FAILED_TO_START = 3;
 
-    public long TIMEOUT = 30000;        // Timeout in msec to shut off listener
+    private float x,y,z;
+    private long  timestamp;
+    private int   status;
+    private int   accuracy = Magnetometer.ANDROID_ACTIVE_SENSOR_ACCURACY;
 
-    int status;                         // status of listener
-    float x;                            // magnetometer x value
-    float y;                            // magnetometer y value
-    float z;                            // magnetometer z value
-    float magnitude;                    // magnetometer calculated magnitude
-    long timeStamp;                     // time of most recent value
-    long lastAccessTime;                // time the value was last retrieved
-
-    private SensorManager sensorManager;// Sensor manager
-    Sensor mSensor;                     // Magnetic sensor returned by sensor manager
+    private SensorManager sensorManager;    // Sensor manager
+    Sensor mSensor;                         // Magnetic sensor returned by sensor manager
 
     private CallbackContext callbackContext;
-    List<CallbackContext> watchContexts;
+
+    private Handler mainHandler = null;
+    private Runnable mainRunnable = new Runnable() {
+        public void run() {
+            Magnetometer.this.timeout();
+        }
+    };
 
     public Magnetometer() {
         this.x = 0;
         this.y = 0;
         this.z = 0;
-        this.timeStamp = 0;
-        this.watchContexts = new ArrayList<CallbackContext>();
+        this.timestamp = 0;
         this.setStatus(Magnetometer.STOPPED);
-    }
-
-    public void onDestroy() {
-        this.stop();
-    }
-
-    public void onReset() {
-        this.stop();
     }
 
     //--------------------------------------------------------------------------
     // Cordova Plugin Methods
     //--------------------------------------------------------------------------
-
+    @Override
     public void initialize(CordovaInterface cordova, CordovaWebView webView) {
         super.initialize(cordova, webView);
         this.sensorManager = (SensorManager) cordova.getActivity().getSystemService(Context.SENSOR_SERVICE);
     }
 
-    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
+    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) {
         if (action.equals("start")) {
-            this.start();
+            this.callbackContext = callbackContext;
+            if (this.status != Magnetometer.RUNNING) {
+                this.start();
+            }
         }
         else if (action.equals("stop")) {
-            this.stop();
-        }
-        else if (action.equals("getStatus")) {
-            int i = this.getStatus();
-            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, i));
-        }
-        else if (action.equals("getReading")) {
-            // If not running, then this is an async call, so don't worry about waiting
-            if (this.status != Magnetometer.RUNNING) {
-                int r = this.start();
-                if (r == Magnetometer.ERROR_FAILED_TO_START) {
-                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.IO_EXCEPTION, Magnetometer.ERROR_FAILED_TO_START));
-                    return false;
-                }
-                // Set a timeout callback on the main thread.
-                Handler handler = new Handler(Looper.getMainLooper());
-                handler.postDelayed(new Runnable() {
-                    public void run() {
-                        Magnetometer.this.timeout();
-                    }
-                }, 2000);
+            if (this.status == Magnetometer.RUNNING) {
+                this.stop();
             }
-            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, getReading()));
         } else {
-            // Unsupported action
             return false;
         }
+        
+        PluginResult result = new PluginResult(PluginResult.Status.NO_RESULT, "");
+        result.setKeepCallback(true);
+        callbackContext.sendPluginResult(result);
         return true;
     }
+
+    public void OnDestroy() {
+        this.stop();
+    }
+
 
     //--------------------------------------------------------------------------
     // Local Methods
@@ -130,33 +116,51 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
      *
      * @return          status of listener
      */
-    public int start() {
-
+    private int start() {
         // If already starting or running, then just return
         if ((this.status == Magnetometer.RUNNING) || (this.status == Magnetometer.STARTING)) {
+            startTimeout();
             return this.status;
         }
 
         // Get magnetic field sensor from sensor manager
+        this.setStatus(Magnetometer.STARTING);
         @SuppressWarnings("deprecation")
-        List<Sensor> list = this.sensorManager.getSensorList(Sensor.TYPE_MAGNETIC_FIELD);
+        List<Sensor> list = this.sensorManager.getSensorList(Magnetometer.ANDROID_MAGNETIC_SENSOR_TYPE);
 
         // If found, then register as listener
         if (list != null && list.size() > 0) {
             this.mSensor = list.get(0);
-            this.sensorManager.registerListener(this, this.mSensor, SensorManager.SENSOR_DELAY_NORMAL);
-            this.lastAccessTime = System.currentTimeMillis();
-            this.setStatus(Magnetometer.STARTING);
-        }
-
-        // If error, then set status to error
-        else {
+            // check this
+            if (this.sensorManager.registerListener(this, this.mSensor, SensorManager.SENSOR_DELAY_NORMAL)) {
+                this.setStatus(Magnetometer.STARTING);
+                this.accuracy = Magnetometer.ANDROID_ACTIVE_SENSOR_ACCURACY;
+            } else {
+                this.setStatus(Magnetometer.ERROR_FAILED_TO_START);
+                this.fail(Magnetometer.ERROR_FAILED_TO_START, "Device sensor returned an error.");
+                return this.status;
+            };
+        } else {
             this.setStatus(Magnetometer.ERROR_FAILED_TO_START);
+            this.fail(Magnetometer.ERROR_FAILED_TO_START, "No sensors found to register to.");
+            return this.status;
         }
 
+        startTimeout();
         return this.status;
     }
 
+    private void startTimeout() {
+        stopTimeout();
+        mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.postDelayed(mainRunnable, 2000);
+    }
+
+    private void stopTimeout() {
+        if (mainHandler != null) {
+            mainHandler.removeCallbacks(mainRunnable);
+        }
+    }
     /**
      * Stop listening to compass sensor.
      */
@@ -165,43 +169,23 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
             this.sensorManager.unregisterListener(this);
         }
         this.setStatus(Magnetometer.STOPPED);
+        this.accuracy = SensorManager.SENSOR_STATUS_UNRELIABLE;
     }
 
     /**
      * Called after a delay to time out if the listener has not attached fast enough.
      */
     private void timeout() {
-        if (this.status == Magnetometer.STARTING) {
-            this.setStatus(Magnetometer.ERROR_FAILED_TO_START);
-            if (this.callbackContext != null) {
-                this.callbackContext.error("Magnetometer listener failed to start.");
-            }
+        if (this.status == Magnetometer.STARTING &&
+            this.accuracy >= Magnetometer.ANDROID_ACTIVE_SENSOR_ACCURACY) {
+            this.timestamp = System.currentTimeMillis();
+            this.win();
         }
     }
-
 
     //--------------------------------------------------------------------------
     // SensorEventListener Interface
     //--------------------------------------------------------------------------
-
-    /**
-     * Sensor listener event.
-     *
-     * @param event
-     */
-    public void onSensorChanged(SensorEvent event) {
-
-        // Save reading
-        this.timeStamp = System.currentTimeMillis();
-        this.x = event.values[0];
-        this.y = event.values[1];
-        this.z = event.values[2];
-
-        // If heading hasn't been read for TIMEOUT time, then turn off compass sensor to save power
-        if ((this.timeStamp - this.lastAccessTime) > this.TIMEOUT) {
-            this.stop();
-        }
-    }
 
     /**
      * Required by SensorEventListener
@@ -209,48 +193,86 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
      * @param accuracy
      */
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
-        // DO NOTHING
+        if (sensor.getType() != Magnetometer.ANDROID_MAGNETIC_SENSOR_TYPE) {
+            return;
+        }
+
+        if (this.status == Magnetometer.STOPPED) {
+            return;
+        }
+        this.accuracy = accuracy;
     }
 
+    /**
+     * Sensor listener event.
+     *
+     * @param event
+     */
+    public void onSensorChanged(SensorEvent event) {
+        if (event.sensor.getType() != Magnetometer.ANDROID_MAGNETIC_SENSOR_TYPE) {
+            return;
+        }
+
+        if (this.status == Magnetometer.STOPPED) {
+            return;
+        }
+        this.setStatus(Magnetometer.RUNNING);
+
+        if (this.accuracy >= Magnetometer.ANDROID_ACTIVE_SENSOR_ACCURACY) {
+        {
+            // Save reading
+            this.timestamp = System.currentTimeMillis();
+            this.x = event.values[0];
+            this.y = event.values[1];
+            this.z = event.values[2];
+    
+            this.win();
+        }
+    }
     // ------------------------------------------------
     // JavaScript Interaction
     // ------------------------------------------------
 
-    /**
-     * Get status of magnetic sensor.
-     *
-     * @return          status
-     */
-    public int getStatus() {
-        return this.status;
+    @Override
+    public void onReset() {
+        if (this.status == Magnetometer.RUNNING) {
+            this.stop();
+        }
     }
 
-    /**
-     * Set the status and send it to JavaScript.
-     * @param status
-     */
+    private void fail(int code, String message) {
+        JSONObject errorObj = new JSONObject();
+        try {
+            errorObj.put("code", code);
+            errorObj.put("message", message);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        PluginResult err = new PluginResult(PluginResult.Status.ERROR, errorObj);
+        err.setKeepCallback(true);
+        callbackContext.sendPluginResult(err);
+    }
+
+    private void win() {
+        PluginResult result = new PluginResult(PluginResult.Status.OK, this.getReadingJSON());
+        result.setKeepCallback(true);
+        callbackContext.sendPluginResult(result);
+    }
+
     private void setStatus(int status) {
         this.status = status;
     }
 
-    /**
-     * Create the Reading JSON object to be returned to JavaScript
-     *
-     * @return a magnetic sensor reading
-     */
-    private JSONObject getReading() throws JSONException {
-        JSONObject obj = new JSONObject();
-
-        obj.put("x", this.x);
-        obj.put("y", this.y);
-        obj.put("z", this.z);
-
-        double x2 = Float.valueOf(this.x * this.x).doubleValue();
-        double y2 = Float.valueOf(this.y * this.y).doubleValue();
-        double z2 = Float.valueOf(this.z * this.z).doubleValue();
-
-        obj.put("magnitude", Math.sqrt(x2 + y2 + z2));
-
-        return obj;
+    private JSONObject getReadingJSON() {
+        JSONObject r = new JSONObject();
+        try {
+            r.put("x", this.x);
+            r.put("y", this.y);
+            r.put("z", this.z);
+            r.put("timestamp", this.timestamp);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return r;
     }
 }

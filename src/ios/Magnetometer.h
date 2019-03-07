@@ -10,14 +10,20 @@
 
 #import <UIKit/UIKit.h>
 #import <Cordova/CDVPlugin.h>
-#import <CoreLocation/CoreLocation.h>
+#import <CoreMotion/CoreMotion.h>
 
-@interface Magnetometer : CDVPlugin<CLLocationManagerDelegate>
-    - (void)getReading:(CDVInvokedUrlCommand*)command;
-    - (void)watchReadings:(CDVInvokedUrlCommand*)command;
-    - (void)stop:(CDVInvokedUrlCommand*)command;
+@interface Magnetometer : CDVPlugin
+{
+    double x;
+    double y;
+    double z;
+}
 
-    @property (copy)   NSString* callbackId;
+@property (readonly, assign) BOOL isRunning;
+@property (nonatomic, strong) NSString* callbackId;
+
+- (Magnetometer*)init;
+
+- (void)start:(CDVInvokedUrlCommand*)command;
+- (void)stop:(CDVInvokedUrlCommand*)command;
 @end
-
-
