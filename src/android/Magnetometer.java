@@ -139,12 +139,12 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
 
         // Get magnetic field sensor from sensor manager
         @SuppressWarnings("deprecation")
-        List<Sensor> list = this.sensorManager.getSensorList(Sensor.TYPE_MAGNETIC_FIELD);
+        List<Sensor> list = this.sensorManager.getSensorList(Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED);
 
         // If found, then register as listener
         if (list != null && list.size() > 0) {
             this.mSensor = list.get(0);
-            this.sensorManager.registerListener(this, this.mSensor, SensorManager.SENSOR_DELAY_NORMAL);
+            this.sensorManager.registerListener(this, this.mSensor, 20000, 20000);
             this.lastAccessTime = System.currentTimeMillis();
             this.setStatus(Magnetometer.STARTING);
         }
@@ -244,12 +244,13 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
         obj.put("x", this.x);
         obj.put("y", this.y);
         obj.put("z", this.z);
+        obj.put("timestamp", this.timeStamp);
 
-        double x2 = Float.valueOf(this.x * this.x).doubleValue();
-        double y2 = Float.valueOf(this.y * this.y).doubleValue();
-        double z2 = Float.valueOf(this.z * this.z).doubleValue();
+        // double x2 = Float.valueOf(this.x * this.x).doubleValue();
+        // double y2 = Float.valueOf(this.y * this.y).doubleValue();
+        // double z2 = Float.valueOf(this.z * this.z).doubleValue();
 
-        obj.put("magnitude", Math.sqrt(x2 + y2 + z2));
+        obj.put("magnitude", 0); // Math.sqrt(x2 + y2 + z2));
 
         return obj;
     }
