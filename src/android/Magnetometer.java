@@ -43,6 +43,8 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
     public static int STARTING = 1;
     public static int RUNNING = 2;
     public static int ERROR_FAILED_TO_START = 3;
+    // Reading interval in microseconds
+    public static final int READ_INTERVAL_US = 10000;
 
     public long TIMEOUT = 30000;        // Timeout in msec to shut off listener
 
@@ -144,7 +146,7 @@ public class Magnetometer extends CordovaPlugin implements SensorEventListener  
         // If found, then register as listener
         if (list != null && list.size() > 0) {
             this.mSensor = list.get(0);
-            this.sensorManager.registerListener(this, this.mSensor, 20000, 20000);
+            this.sensorManager.registerListener(this, this.mSensor, this.READ_INTERVAL_US, this.READ_INTERVAL_US);
             this.lastAccessTime = System.currentTimeMillis();
             this.setStatus(Magnetometer.STARTING);
         }
